@@ -11,15 +11,16 @@ final class MiddlewareRunner
 {
     /**
      * @var callable[]
+     * @internal
      */
-    private $middleware = array();
+    public $middleware = array();
 
     /**
      * @param callable[] $middleware
      */
     public function __construct(array $middleware)
     {
-        $this->middleware = $middleware;
+        $this->middleware = array_values($middleware);
     }
 
     /**
@@ -32,22 +33,42 @@ final class MiddlewareRunner
             return Promise\reject(new \RuntimeException('No middleware to run'));
         }
 
-        $middlewareCollection = $this->middleware;
-        $middleware = array_shift($middlewareCollection);
+        $position = 0;
 
-        $cancel = null;
-        return new Promise\Promise(function ($resolve, $reject) use ($middleware, $request, $middlewareCollection, &$cancel) {
-            $cancel = $middleware(
-                $request,
-                new MiddlewareRunner(
-                    $middlewareCollection
-                )
-            );
-            $resolve($cancel);
-        }, function () use (&$cancel) {
-            if ($cancel instanceof Promise\CancellablePromiseInterface) {
-                $cancel->cancel();
-            }
-        });
+        $that = $this;
+        $func = function (ServerRequestInterface $request) use (&$func, &$position, &$that) {
+            $middleware = $that->middleware[$position];
+            $response = null;
+            return new Promise\Promise(function ($resolve, $reject) use ($middleware, $request, $func, &$response, &$position) {
+                $position++;
+                try {
+                    $response = $middleware(
+                        $request,
+                        $func
+                    );
+
+                    if (!($response instanceof PromiseInterface)) {
+                        $response = Promise\resolve($response);
+                    }
+
+                    $response->then($resolve, function ($error) use (&$position, $reject) {
+                        $position--;
+                        $reject($error);
+                    });
+                } catch (\Exception $error) {
+                    $position--;
+                    $reject($error);
+                } catch (\Throwable $error) {
+                    $position--;
+                    $reject($error);
+                }
+            }, function () use (&$response) {
+                if ($response instanceof Promise\CancellablePromiseInterface) {
+                    $response->cancel();
+                }
+            });
+        };
+
+        return $func($request);
     }
 }
