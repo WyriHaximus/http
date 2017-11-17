@@ -39,33 +39,25 @@ final class MiddlewareRunner
         $func = function (ServerRequestInterface $request) use (&$func, &$position, &$that) {
             $middleware = $that->middleware[$position];
             $response = null;
-            return new Promise\Promise(function ($resolve, $reject) use ($middleware, $request, $func, &$response, &$position) {
+            $promise = new Promise\Promise(function ($resolve) use ($middleware, $request, $func, &$response, &$position) {
                 $position++;
-                try {
-                    $response = $middleware(
-                        $request,
-                        $func
-                    );
 
-                    if (!($response instanceof PromiseInterface)) {
-                        $response = Promise\resolve($response);
-                    }
+                $response = $middleware(
+                    $request,
+                    $func
+                );
 
-                    $response->then($resolve, function ($error) use (&$position, $reject) {
-                        $position--;
-                        $reject($error);
-                    });
-                } catch (\Exception $error) {
-                    $position--;
-                    $reject($error);
-                } catch (\Throwable $error) {
-                    $position--;
-                    $reject($error);
-                }
+                $resolve($response);
             }, function () use (&$response) {
                 if ($response instanceof Promise\CancellablePromiseInterface) {
                     $response->cancel();
                 }
+            });
+
+            return $promise->then(null, function ($error) use (&$position) {
+                $position--;
+
+                return Promise\reject($error);
             });
         };
 
